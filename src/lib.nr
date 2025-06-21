@@ -39,6 +39,58 @@ pub fn verify_signature<let N: u32>(
     is_ok
 }
 
+pub fn verify_token<let N: u32>(
+    public_key: EmbeddedCurvePoint,
+    Z: EmbeddedCurvePoint,
+    sig_e_bytes: [u8; 64],
+    message: [u8; N],
+) -> bool {
+    //scalar lo/hi from bytes
+    // let sig_s = scalar_from_bytes(signature, 0);
+    // let sig_e = scalar_from_bytes(signature, 32);
+    // pub_key is on Grumpkin curve
+    let mut is_ok = (public_key.y * public_key.y == public_key.x * public_key.x * public_key.x - 17)
+        & (!public_key.is_infinite);
+
+    // Z is on Grumpkin curve
+    is_ok &= (Z.y * Z.y == Z.x * Z.x * Z.x - 17)
+        & (!Z.is_infinite);
+
+    let sig_e = scalar_from_bytes(sig_e_bytes, 0);
+    let (r_is_infinite, result) = calculate_signature_challenge_token(public_key, Z, sig_e, message);
+    is_ok &= !r_is_infinite;
+    for i in 0..32 {
+        is_ok &= result[i] == sig_e_bytes[i];
+    }
+    
+    is_ok
+}
+
+fn calculate_signature_challenge_token<let N: u32>(
+    public_key: EmbeddedCurvePoint,
+    S: EmbeddedCurvePoint,
+    sig_e: EmbeddedCurveScalar,
+    message: [u8; N],
+) -> (bool, [u8; 32]) {
+    let reduced_sig_e = normalize_signature(sig_e);
+    // let r = multi_scalar_mul([g1, public_key], [sig_s, reduced_sig_e]);
+    let r = S + multi_scalar_mul([public_key], [reduced_sig_e]);
+    // compare the _hashes_ rather than field elements modulo r
+    let pedersen_hash = pedersen_hash([r.x, public_key.x, public_key.y]);
+    let pde: [u8; 32] = pedersen_hash.to_be_bytes();
+
+    let mut hash_input = [0; N + 32];
+    for i in 0..32 {
+        hash_input[i] = pde[i];
+    }
+    for i in 0..N {
+        hash_input[32 + i] = message[i];
+    }
+
+    let result = blake2s(hash_input);
+    (r.is_infinite, result)
+}
+
 pub fn assert_valid_signature<let N: u32>(
     public_key: EmbeddedCurvePoint,
     signature: [u8; 64],
